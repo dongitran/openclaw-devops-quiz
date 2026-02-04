@@ -1277,3 +1277,413 @@ const quizData = [
         answer: "1. Deploy active-passive or active-active across regions. 2. Use global load balancer (Route 53, Cloudflare) for traffic routing. 3. Implement cross-region database replication (async for performance). 4. Use multi-region container registry with replication. 5. Store Terraform/Kubernetes manifests in Git for quick reconstruction. 6. Automate failover with health checks and traffic shifting. 7. Regular DR drills to validate RTO. 8. Consider backup Kubernetes clusters in secondary region. 9. Use infrastructure as code for consistent environment recreation."
     }
 ];
+// Quiz State
+let currentQuestion = 0;
+let userAnswers = new Array(quizData.length).fill(null);
+let shuffledQuizData = []; // Store shuffled questions
+
+// Fisher-Yates Shuffle Algorithm
+function fisherYatesShuffle(array) {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+// Shuffle questions and options
+function shuffleQuiz() {
+    // Shuffle the order of questions
+    const shuffledQuestions = fisherYatesShuffle(quizData);
+    
+    // For each question, shuffle the options and update correct index (only for MCQ)
+    shuffledQuizData = shuffledQuestions.map(q => {
+        // Open-ended questions don't have options to shuffle
+        if (q.type === 'open') {
+            return q;
+        }
+        
+        // Create array of [option, originalIndex] pairs
+        const optionsWithIndex = q.options.map((opt, idx) => ({
+            text: opt,
+            originalIndex: idx
+        }));
+        
+        // Shuffle the options
+        const shuffledOptions = fisherYatesShuffle(optionsWithIndex);
+        
+        // Find the new position of the correct answer
+        const newCorrectIndex = shuffledOptions.findIndex(
+            opt => opt.originalIndex === q.correct
+        );
+        
+        // Return shuffled question with updated correct index
+        return {
+            ...q,
+            options: shuffledOptions.map(opt => opt.text),
+            correct: newCorrectIndex
+        };
+    });
+}
+
+// Category Emojis Mapping
+const categoryEmojis = {
+    'Docker': '🐳',
+    'Kubernetes': '☸️',
+    'CI/CD': '🔄',
+    'IaC': '🏗️',
+    'Monitoring': '📊',
+    'Cloud': '☁️',
+    'Git': '🌿',
+    'Orchestration': '🎼',
+    'Logging': '📝',
+    'Deployment': '🚀',
+    'Secrets': '🔐',
+    'Troubleshooting': '🔧',
+    'Architecture': '🏛️'
+};
+
+// DOM Elements
+const questionCounter = document.getElementById('questionCounter');
+const categoryBadge = document.getElementById('categoryBadge');
+const questionText = document.getElementById('questionText');
+const optionsContainer = document.getElementById('optionsContainer');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const showAnswerBtn = document.getElementById('showAnswerBtn');
+const quizComplete = document.getElementById('quizComplete');
+const quizCard = document.querySelector('.quiz-card');
+const body = document.body;
+
+// Modal Elements
+const answerModal = document.getElementById('answerModal');
+const correctAnswer = document.getElementById('correctAnswer');
+const explanation = document.getElementById('explanation');
+
+// Update background gradient based on current question
+function updateBackgroundGradient() {
+    const totalQuestions = shuffledQuizData.length || 100;
+    const progress = currentQuestion / (totalQuestions - 1);
+
+    // Calculate hue: Start at 220 (blue), go through 280 (purple), 320 (pink), 160 (green), back to 200
+    // This creates a smooth transition: blue -> purple -> pink -> green -> teal
+    const startHue = 220;
+    const endHue = 380; // 220 + 160 = 380 (which wraps to 20)
+    const hue = startHue + (progress * (endHue - startHue));
+    const normalizedHue = hue % 360;
+
+    // Second color is offset by 40 degrees for a complementary look
+    const secondHue = (normalizedHue + 40) % 360;
+
+    // Use pastel/light colors with high lightness (85-92%) and low saturation (50-60%)
+    const color1 = `hsl(${normalizedHue}, 55%, 88%)`;
+    const color2 = `hsl(${secondHue}, 60%, 85%)`;
+
+    body.style.background = `linear-gradient(135deg, ${color1} 0%, ${color2} 100%)`;
+}
+
+// Initialize
+function init() {
+    console.log('Initializing quiz...');
+    
+    // Re-query DOM elements to ensure they're available
+    const questionTextEl = document.getElementById('questionText');
+    const questionCounterEl = document.getElementById('questionCounter');
+    const categoryBadgeEl = document.getElementById('categoryBadge');
+    const optionsContainerEl = document.getElementById('optionsContainer');
+    
+    console.log('DOM Elements:', {
+        questionText: !!questionTextEl,
+        questionCounter: !!questionCounterEl,
+        categoryBadge: !!categoryBadgeEl,
+        optionsContainer: !!optionsContainerEl
+    });
+    
+    // Ensure quiz data exists
+    if (!quizData || quizData.length === 0) {
+        console.error('Quiz data is empty!');
+        if (questionTextEl) questionTextEl.textContent = 'Error: Quiz data not found';
+        return;
+    }
+    
+    console.log('Quiz data loaded:', quizData.length, 'questions');
+    
+    shuffleQuiz();
+    console.log('Shuffled quiz:', shuffledQuizData.length, 'questions');
+    
+    userAnswers = new Array(shuffledQuizData.length).fill(null);
+    renderQuestion();
+    updateNavigation();
+    updateBackgroundGradient();
+}
+
+// Render current question
+function renderQuestion() {
+    // Re-query DOM elements to ensure they're available
+    const questionTextEl = document.getElementById('questionText');
+    const questionCounterEl = document.getElementById('questionCounter');
+    const categoryBadgeEl = document.getElementById('categoryBadge');
+    const optionsContainerEl = document.getElementById('optionsContainer');
+    
+    // Ensure data is loaded
+    if (!shuffledQuizData || shuffledQuizData.length === 0) {
+        console.error('Quiz data not loaded yet');
+        return;
+    }
+    
+    const q = shuffledQuizData[currentQuestion];
+    
+    if (!q) {
+        console.error('Question not found at index', currentQuestion);
+        return;
+    }
+
+    console.log('Rendering question', currentQuestion, ':', q.question.substring(0, 50));
+
+    // Update header
+    if (questionCounterEl) {
+        questionCounterEl.textContent = `Question ${currentQuestion + 1}/${shuffledQuizData.length}`;
+    }
+    
+    // Update category badge with emoji and color
+    const emoji = categoryEmojis[q.category] || '💡';
+    if (categoryBadgeEl) {
+        categoryBadgeEl.textContent = `${emoji} ${q.category}`;
+        categoryBadgeEl.className = 'category-badge';
+        categoryBadgeEl.setAttribute('data-category', q.category);
+    }
+    
+    if (questionTextEl) {
+        questionTextEl.textContent = q.question;
+    }
+    
+    // Render options based on question type
+    if (optionsContainerEl) {
+        optionsContainerEl.innerHTML = '';
+        
+        if (q.type === 'open') {
+            // Open-ended question: show hint or expected answer outline
+            const hintEl = document.createElement('div');
+            hintEl.className = 'open-question-hint';
+            hintEl.innerHTML = `
+                <div style="padding: 16px; background: rgba(255,255,255,0.1); border-radius: 12px; border: 1px dashed rgba(255,255,255,0.3); margin-bottom: 12px;">
+                    <p style="color: rgba(255,255,255,0.7); font-style: italic; margin: 0;">💡 This is a scenario-based question. Think about your approach, then click "Show Answer" to see the detailed solution.</p>
+                </div>
+            `;
+            optionsContainerEl.appendChild(hintEl);
+        } else {
+            // Multiple choice question
+            const labels = ['A', 'B', 'C', 'D'];
+            
+            q.options.forEach((option, index) => {
+                const optionEl = document.createElement('div');
+                optionEl.className = 'option';
+                
+                optionEl.innerHTML = `
+                    <span class="option-letter">${labels[index]}</span>
+                    <span class="option-text">${option}</span>
+                `;
+                
+                optionEl.onclick = () => selectOption(index);
+                optionsContainerEl.appendChild(optionEl);
+            });
+        }
+    }
+}
+
+// Select an option - immediate feedback (only for multiple choice)
+function selectOption(index) {
+    const q = shuffledQuizData[currentQuestion];
+    
+    // Only works for multiple choice questions
+    if (q.type === 'open') return;
+    
+    userAnswers[currentQuestion] = index;
+    
+    // Get all option elements
+    const optionsContainerEl = document.getElementById('optionsContainer');
+    const optionEls = optionsContainerEl ? optionsContainerEl.querySelectorAll('.option') : [];
+    
+    optionEls.forEach((el, i) => {
+        el.classList.remove('selected');
+        
+        if (i === q.correct) {
+            // Always highlight correct answer in green
+            el.classList.add('correct');
+        } else if (i === index && i !== q.correct) {
+            // Highlight wrong answer in red only if user selected it
+            el.classList.add('wrong');
+        }
+        
+        // Disable further clicks
+        el.onclick = null;
+        el.style.cursor = 'default';
+    });
+}
+
+// Show answer in modal
+function showAnswer() {
+    const q = shuffledQuizData[currentQuestion];
+    const labels = ['A', 'B', 'C', 'D'];
+    const correctAnswerEl = document.getElementById('correctAnswer');
+    const explanationEl = document.getElementById('explanation');
+    
+    // Mark open-ended questions as "viewed" when showing answer
+    if (q.type === 'open' && userAnswers[currentQuestion] === null) {
+        userAnswers[currentQuestion] = -1; // -1 indicates "viewed but no selection"
+    }
+    
+    if (q.type === 'open') {
+        // Open-ended question: show the answer field
+        if (correctAnswerEl) {
+            correctAnswerEl.innerHTML = `
+                <div style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.2) 0%, rgba(118, 75, 162, 0.2) 100%); padding: 16px; border-radius: 12px; border-left: 4px solid #667eea; margin-bottom: 16px;">
+                    <strong style="color: #1e40af; display: block; margin-bottom: 8px;">📝 Sample Answer:</strong>
+                    <div style="color: #1e293b; line-height: 1.6;">${q.answer || 'See detailed explanation below'}</div>
+                </div>
+            `;
+        }
+        if (explanationEl) {
+            explanationEl.innerHTML = `<strong>Detailed Explanation:</strong><br><br>${q.explanation}`;
+        }
+    } else {
+        // Multiple choice question
+        if (correctAnswerEl) {
+            correctAnswerEl.textContent = `Correct answer: ${labels[q.correct]}`;
+        }
+        if (explanationEl) {
+            explanationEl.innerHTML = q.explanation;
+        }
+    }
+    
+    answerModal.classList.add('active');
+}
+
+// Close modal
+function closeModal(event) {
+    // Close if clicking overlay or close button, or if event is null (manual call)
+    if (!event || event.target === answerModal) {
+        answerModal.classList.remove('active');
+    }
+}
+
+// Navigation
+function prevQuestion() {
+    if (currentQuestion > 0) {
+        currentQuestion--;
+        renderQuestion();
+        updateNavigation();
+        updateBackgroundGradient();
+    }
+}
+
+function nextQuestion() {
+    console.log('Next clicked, current:', currentQuestion);
+    if (currentQuestion < shuffledQuizData.length - 1) {
+        currentQuestion++;
+        console.log('Moving to question:', currentQuestion);
+        renderQuestion();
+        updateNavigation();
+        updateBackgroundGradient();
+    } else {
+        // Show completion
+        showCompletion();
+    }
+}
+
+function updateNavigation() {
+    prevBtn.disabled = currentQuestion === 0;
+    nextBtn.textContent = currentQuestion === shuffledQuizData.length - 1 ? 'Finish →' : 'Next →';
+}
+
+function showCompletion() {
+    // Calculate results
+    let correctCount = 0;
+    let viewedCount = 0;
+    let mcqCount = 0;
+    let openCount = 0;
+    
+    for (let i = 0; i < shuffledQuizData.length; i++) {
+        const q = shuffledQuizData[i];
+        if (q.type === 'open') {
+            openCount++;
+            // For open questions, count if user viewed the answer
+            if (userAnswers[i] !== null) {
+                viewedCount++;
+            }
+        } else {
+            mcqCount++;
+            // For MCQ, count correct answers
+            if (userAnswers[i] === q.correct) {
+                correctCount++;
+            }
+        }
+    }
+    
+    // Update result display - show MCQ correct + Open viewed
+    const totalAnswered = correctCount + viewedCount;
+    document.getElementById('correctCount').textContent = totalAnswered;
+    document.getElementById('totalCount').textContent = shuffledQuizData.length;
+    
+    // Update result message based on score
+    const percentage = (correctCount / shuffledQuizData.length) * 100;
+    const messageEl = document.getElementById('resultMessage');
+    
+    if (percentage === 100) {
+        messageEl.textContent = '🌟 Perfect score! You\'re a database master!';
+    } else if (percentage >= 80) {
+        messageEl.textContent = '🎉 Excellent! You really know your databases!';
+    } else if (percentage >= 60) {
+        messageEl.textContent = '👍 Good job! Keep practicing to improve!';
+    } else {
+        messageEl.textContent = '💪 Keep learning! You\'ll get better with practice!';
+    }
+    
+    quizCard.style.display = 'none';
+    quizComplete.style.display = 'block';
+}
+
+function restartQuiz() {
+    shuffleQuiz();
+    currentQuestion = 0;
+    userAnswers = new Array(shuffledQuizData.length).fill(null);
+    quizCard.style.display = 'flex';
+    quizCard.style.flexDirection = 'column';
+    quizComplete.style.display = 'none';
+    renderQuestion();
+    updateNavigation();
+    updateBackgroundGradient();
+}
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+    if (quizComplete.style.display === 'block') return;
+    
+    // Close modal on Escape
+    if (e.key === 'Escape' && answerModal.classList.contains('active')) {
+        closeModal();
+        return;
+    }
+    
+    if (e.key === 'ArrowLeft' && !prevBtn.disabled) {
+        prevQuestion();
+    } else if (e.key === 'ArrowRight') {
+        nextQuestion();
+    } else if (e.key >= '1' && e.key <= '4') {
+        selectOption(parseInt(e.key) - 1);
+    } else if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        showAnswer();
+    }
+});
+
+// Start when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    try {
+        init();
+    } catch (error) {
+        console.error('Failed to initialize quiz:', error);
+        questionText.textContent = 'Failed to load quiz. Please refresh the page.';
+    }
+});
